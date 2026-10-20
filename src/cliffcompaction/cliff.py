@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 
 from .config import Config
@@ -12,6 +14,42 @@ class CompactResult:
     head_len: int  # number of verbatim head messages
     summary: dict  # the synthetic summary message
     cut: int  # index into the INPUT list: messages[cut:] were kept verbatim
+
+
+KEPT_HEADER = "Tool results kept verbatim from earlier reads:"
+_KEPT_RE = re.compile(r'<kept-result call=("(?:[^"\\]|\\.)*")>\n(.*?)\n</kept-result>', re.DOTALL)
+
+
+def _kept_results(to_compact: list[list[dict]], dialect: Dialect, cfg: Config) -> str:
+    """Verbatim results of calls matching cfg.keep_result_pattern, as a summary section.
+
+    Results kept by an earlier summary are carried forward (re-compaction
+    drops that summary), and a later read of the same call replaces an
+    earlier one. Order is first-read order, so the section stays stable
+    across compactions. Deterministic in the input, like the rest of compact().
+    """
+    if not (cfg.keep_result_pattern and dialect.tool_calls and dialect.tool_results):
+        return ""
+    pattern = re.compile(cfg.keep_result_pattern)
+    kept: dict[str, str] = {}
+    calls: dict[str, str] = {}
+    for turn in to_compact:
+        for msg in turn:
+            if dialect.is_summary_message(msg):
+                if dialect.message_text is not None:
+                    for m in _KEPT_RE.finditer(dialect.message_text(msg)):
+                        kept[json.loads(m.group(1))] = m.group(2)
+                continue
+            for call_id, text in dialect.tool_calls(msg):
+                calls[call_id] = text
+            for call_id, out in dialect.tool_results(msg):
+                call = calls.get(call_id)
+                # Short results already appear in the summary as `result:` lines.
+                if call and pattern.search(call) and len(out) > cfg.result_max_chars:
+                    kept[call] = out
+    blocks = [f"<kept-result call={json.dumps(call)}>\n{out}\n</kept-result>"
+              for call, out in kept.items()]
+    return KEPT_HEADER + "\n\n" + "\n\n".join(blocks) if blocks else ""
 
 
 def group_turns(body: list[dict], dialect: Dialect) -> list[list[dict]]:
@@ -78,6 +116,9 @@ def compact(messages: list[dict], dialect: Dialect, cfg: Config) -> CompactResul
     to_keep = turns[len(turns) - keep_recent :]
 
     parts: list[str] = []
+    kept_section = _kept_results(to_compact, dialect, cfg)
+    if kept_section:
+        parts.append(kept_section)
     for turn in to_compact:
         for msg in turn:
             parts.extend(dialect.summarize_message(msg, cfg))

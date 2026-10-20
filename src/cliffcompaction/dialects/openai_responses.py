@@ -16,6 +16,9 @@ Item shape notes:
 
 from __future__ import annotations
 
+import json
+import re
+
 from ..config import Config
 from ..hashing import canonical_json, digest_obj
 from .base import SUMMARY_HEADER, Dialect, strip_task_notifications, truncate
@@ -202,21 +205,89 @@ def summarize_message(item: dict, cfg: Config) -> list[str]:
         if not text:
             return []  # encrypted-only reasoning: nothing foldable
         return [f"thinking: {truncate(text, cfg.thinking_max_chars)}"]
-    if t == "function_call_output":
-        out = item.get("output")
-        if not isinstance(out, str):
-            out = _content_text(out) or canonical_json(out)
-        out = out.strip()
+    if t in _OUTPUT_TYPES:
+        out = _output_text(item)
         if out and len(out) <= cfg.result_max_chars:
             return [f"result: {out}"]
         return []
     if t.endswith("_call"):
-        args = item.get("arguments", "")
-        if not isinstance(args, str):
-            args = canonical_json(args)
-        name = item.get("name") or t
-        return [f"[{name}] {truncate(args, cfg.cmd_max_chars)}"]
+        name, text = _call_parts(item)
+        return [f"[{name}] {truncate(text, cfg.cmd_max_chars)}"]
     return []
+
+
+# Codex code mode sends shell commands as a `custom_tool_call` named `exec`
+# whose `input` is a script around one tool call, e.g.
+# `text(await tools.exec_command({cmd:"cat SKILL.md"}));`.
+_EXEC_CMD_RE = re.compile(r'tools\.(\w+)\(\{\s*"?cmd"?\s*:\s*("(?:[^"\\]|\\.)*")')
+_OUTPUT_TYPES = ("function_call_output", "custom_tool_call_output")
+
+
+def _call_parts(item: dict) -> tuple[str, str]:
+    """(tool name, call text): the shell command for a code-mode exec, else the arguments."""
+    t = _item_type(item)
+    if t == "custom_tool_call":
+        raw = item.get("input") or ""
+        if not isinstance(raw, str):
+            raw = canonical_json(raw)
+        m = _EXEC_CMD_RE.search(raw)
+        if m:
+            try:
+                return m.group(1), json.loads(m.group(2))
+            except ValueError:
+                pass
+        return item.get("name") or t, raw
+    args = item.get("arguments", "")
+    if not isinstance(args, str):
+        args = canonical_json(args)
+    return item.get("name") or t, args
+
+
+def _output_text(item: dict) -> str:
+    """A tool result's text. Code-mode exec results wrap the command output in
+    a JSON object (`{"chunk_id":…, "exit_code":…, "output":…}`); keep the output."""
+    out = item.get("output")
+    if isinstance(out, str):
+        return out.strip()
+    if not isinstance(out, list):
+        return canonical_json(out).strip() if out is not None else ""
+    parts: list[str] = []
+    decoded = False
+    for p in out:
+        if not isinstance(p, dict) or p.get("type") not in ("input_text", "output_text", "text"):
+            continue
+        text = p.get("text", "")
+        if text.startswith("{") and '"output"' in text:
+            try:
+                obj = json.loads(text)
+            except ValueError:
+                obj = None
+            if isinstance(obj, dict) and isinstance(obj.get("output"), str):
+                code = obj.get("exit_code")
+                text = (f"(exit {code})\n" if code not in (0, None) else "") + obj["output"]
+                decoded = True
+        parts.append(text)
+    if decoded:  # the "Script completed / Wall time / Output:" header adds nothing
+        parts = [t for t in parts if not t.startswith("Script completed")]
+    return "\n".join(parts).strip()
+
+
+def tool_calls(item: dict) -> list[tuple[str, str]]:
+    t = _item_type(item)
+    if t.endswith("_call") and item.get("call_id"):
+        name, text = _call_parts(item)
+        return [(item["call_id"], f"[{name}] {text}")]
+    return []
+
+
+def tool_results(item: dict) -> list[tuple[str, str]]:
+    if _item_type(item) in _OUTPUT_TYPES and item.get("call_id"):
+        return [(item["call_id"], _output_text(item))]
+    return []
+
+
+def message_text(item: dict) -> str:
+    return _content_text(item.get("content"))
 
 
 def user_message(text: str) -> dict:
@@ -240,4 +311,7 @@ DIALECT = Dialect(
     opening_user_messages=2,
     messages_key="input",
     group_turns=group_turns,
+    tool_calls=tool_calls,
+    tool_results=tool_results,
+    message_text=message_text,
 )

@@ -219,3 +219,102 @@ def test_proxy_responses_compact_endpoint_passthrough():
     req = up.requests[-1]
     assert req.url.host == "openai.example"
     assert req.content == raw  # no dialect claims it: byte-verbatim
+
+
+# --- Codex code mode (custom_tool_call `exec`) and kept results ---------------
+
+
+def ccall(i, cmd):
+    """Codex 0.163 code mode: a shell command wrapped in an `exec` script."""
+    return {
+        "type": "custom_tool_call",
+        "status": "completed",
+        "call_id": f"cc_{i}",
+        "name": "exec",
+        "input": f"text(await tools.exec_command({{cmd:{json.dumps(cmd)}}}));\n",
+    }
+
+
+def cout(i, output, exit_code=0):
+    payload = {"chunk_id": "c", "wall_time_seconds": 0.1, "exit_code": exit_code,
+               "original_token_count": len(output) // 4, "output": output}
+    return {
+        "type": "custom_tool_call_output",
+        "call_id": f"cc_{i}",
+        "output": [
+            {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+            {"type": "input_text", "text": json.dumps(payload)},
+        ],
+    }
+
+
+SKILL = "# Pick-place skill\n" + "".join(f"Rule {i}: check widget {i}.\n" for i in range(200))
+
+
+def code_session(cmds):
+    """Head, then one [reasoning, exec call, exec output] step per (cmd, output)."""
+    items = [dev("<skills_instructions>x</skills_instructions>"),
+             user("<environment_context><cwd>/w</cwd></environment_context>"),
+             user("Task: pick the green ball.")]
+    for i, (cmd, out) in enumerate(cmds):
+        items += [reasoning(i), ccall(i, cmd), cout(i, out)]
+    return items
+
+
+def summary_of(res):
+    return res.messages[res.head_len]["content"][0]["text"]
+
+
+def test_code_mode_exec_summarized_by_command():
+    items = code_session([("wc -l SKILL.md", "201 SKILL.md"), ("cat SKILL.md", SKILL), ("echo done", "done")])
+    res = compact(items, DIALECT, Config(keep_recent=1))
+    text = summary_of(res)
+    assert "[exec_command] wc -l SKILL.md" in text
+    assert "[exec_command] cat SKILL.md" in text
+    assert "result: 201 SKILL.md" in text  # wrapper decoded, short output kept
+    assert "Rule 7: check widget 7" not in text  # long output dropped by default
+    assert "<kept-result" not in text  # feature off without a pattern
+
+
+def test_keep_result_pattern_keeps_matching_reads_verbatim():
+    log = "LOG " + "y" * 3000
+    items = code_session([("cat SKILL.md", SKILL), ("make build", log), ("echo done", "done")])
+    res = compact(items, DIALECT, Config(keep_recent=1, keep_result_pattern=r"SKILL\.md"))
+    text = summary_of(res)
+    assert '<kept-result call="[exec_command] cat SKILL.md">' in text
+    assert SKILL.strip() in text  # verbatim, decoded from the exec wrapper
+    assert "yyyy" not in text  # non-matching large result still dropped
+
+
+def test_kept_results_survive_recompaction_and_rereads_replace():
+    cfg = Config(keep_recent=1, keep_result_pattern=r"SKILL\.md")
+    items = code_session([("cat SKILL.md", SKILL), ("make a", "a ok"), ("make b", "b ok")])
+    first = compact(items, DIALECT, cfg)
+    # The client resends the compacted history plus new steps; the old reads are gone.
+    later = list(first.messages) + [reasoning(10), ccall(10, "make c"), cout(10, "c ok"),
+                                    reasoning(11), ccall(11, "make d"), cout(11, "d ok")]
+    second = compact(later, DIALECT, cfg)
+    text = summary_of(second)
+    assert text.count("<kept-result") == 1
+    assert SKILL.strip() in text
+    # A later read of the same call replaces the kept copy, in the same position.
+    newer = SKILL.replace("Rule 7:", "Rule 7 (revised):")
+    again = list(second.messages) + [reasoning(12), ccall(12, "cat SKILL.md"), cout(12, newer),
+                                      reasoning(13), ccall(13, "make e"), cout(13, "e ok")]
+    third = summary_of(compact(again, DIALECT, cfg))
+    assert third.count("<kept-result") == 1
+    assert "Rule 7 (revised):" in third
+
+
+
+def test_anthropic_keeps_matching_tool_results():
+    from cliffcompaction.dialects.anthropic import DIALECT as A
+    msgs = [{"role": "user", "content": "Task: fix it."}]
+    for i, (name, inp, out) in enumerate([("Read", {"file_path": "/w/SKILL.md"}, SKILL),
+                                          ("Bash", {"command": "make"}, "z" * 3000),
+                                          ("Bash", {"command": "echo ok"}, "ok")]):
+        msgs.append({"role": "assistant", "content": [{"type": "tool_use", "id": f"t{i}", "name": name, "input": inp}]})
+        msgs.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": out}]})
+    res = compact(msgs, A, Config(keep_recent=1, keep_result_pattern=r"SKILL\.md"))
+    text = res.messages[res.head_len]["content"]
+    assert SKILL.strip() in text and "zzzz" not in text

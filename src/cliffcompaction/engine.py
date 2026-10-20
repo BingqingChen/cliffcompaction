@@ -204,12 +204,13 @@ class Engine:
 
     def _rung_cfg(self, rung: int) -> Config:
         """Derived config for an escalation rung. Rung 1: minimal tail.
-        Rung 2: additionally the lean summary knobs."""
+        Rung 2: additionally the lean summary knobs, and no kept results."""
         kw: dict = {"keep_recent": 1}
         if rung >= 2:
             cap = self.cfg.thought_max_chars
             kw["thought_max_chars"] = 300 if cap <= 0 else min(cap, 300)
             kw["keep_thinking"] = False
+            kw["keep_result_pattern"] = ""
         return dataclasses.replace(self.cfg, **kw)
 
     @staticmethod

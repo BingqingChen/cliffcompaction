@@ -124,14 +124,15 @@ The summary is mechanical, built by content class:
 | Content                             | Treatment                                                 |
 | ----------------------------------- | --------------------------------------------------------- |
 | Tool results                        | Kept verbatim iff ≤ 500 chars, dropped otherwise          |
-| Tool calls                          | One-line signatures (name + truncated arguments)          |
+| Results of `--keep-result-pattern` calls | Kept verbatim at any size, carried into every later summary |
+| Tool calls                          | One-line signatures (name + truncated arguments; the shell command for Codex code-mode `exec`) |
 | Assistant text & thinking           | Kept in full by default                                   |
 | Human text                          | Verbatim in the current summary                           |
 | Head (system + task) & recent turns | Untouched                                                 |
 | Images                              | Dropped from summaries, verbatim in head and recent turns |
 
 
-Re-compaction **drops** the previous summary.
+Re-compaction **drops** the previous summary, except for its kept results.
 
 **Fail-open contract:** any failure — unparseable body, no prefix match, store error — means verbatim passthrough.
 
@@ -150,6 +151,7 @@ Re-compaction **drops** the previous summary.
 | `--thinking-max-chars` / `CLIFF_THINKING_MAX_CHARS` | 0 (unlimited)                                                                 | cap on thinking text, independent of the thought cap                                                                |
 | `--drop-thinking` / `CLIFF_KEEP_THINKING=0`         | keep                                                                          | exclude thinking/reasoning text from summaries                                                                      |
 | `--result-max-chars` / `CLIFF_RESULT_MAX_CHARS`     | 500                                                                           | tool results longer than this are dropped                                                                           |
+| `--keep-result-pattern` / `CLIFF_KEEP_RESULT_PATTERN` | off                                                                         | regex over a tool call's text; results of matching calls (e.g. `SKILL\.md\|README\.md` reads) are kept verbatim in every summary |
 | `CLIFF_HUMAN_MAX_CHARS`                             | 20000                                                                         | sanity cap on human text in summaries                                                                               |
 | `--anthropic-upstream` / `CLIFF_ANTHROPIC_UPSTREAM` | `https://api.anthropic.com`                                                   |                                                                                                                     |
 | `--openai-upstream` / `CLIFF_OPENAI_UPSTREAM`       | `https://api.openai.com`                                                      |                                                                                                                     |
