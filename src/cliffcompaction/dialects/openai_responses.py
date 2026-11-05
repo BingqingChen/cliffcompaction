@@ -220,18 +220,21 @@ def summarize_message(item: dict, cfg: Config) -> list[str]:
 # whose `input` is a script around one tool call, e.g.
 # `text(await tools.exec_command({cmd:"cat SKILL.md"}));`.
 _EXEC_CMD_RE = re.compile(r'tools\.(\w+)\(\{\s*"?cmd"?\s*:\s*("(?:[^"\\]|\\.)*")')
+_TOOL_CALL_RE = re.compile(r'tools\.(\w+)\(')
 _OUTPUT_TYPES = ("function_call_output", "custom_tool_call_output")
 
 
 def _call_parts(item: dict) -> tuple[str, str]:
-    """(tool name, call text): the shell command for a code-mode exec, else the arguments."""
+    """(tool name, call text): the shell command for a code-mode exec script that runs exactly one tool
+    call, a shell command; else the arguments (for exec, the whole script). A script with several calls
+    keeps all of them, so every command it ran is matched by keep_result_pattern and named in summaries."""
     t = _item_type(item)
     if t == "custom_tool_call":
         raw = item.get("input") or ""
         if not isinstance(raw, str):
             raw = canonical_json(raw)
         m = _EXEC_CMD_RE.search(raw)
-        if m:
+        if m and len(_TOOL_CALL_RE.findall(raw)) == 1:
             try:
                 return m.group(1), json.loads(m.group(2))
             except ValueError:

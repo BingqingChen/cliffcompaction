@@ -318,3 +318,16 @@ def test_anthropic_keeps_matching_tool_results():
     res = compact(msgs, A, Config(keep_recent=1, keep_result_pattern=r"SKILL\.md"))
     text = res.messages[res.head_len]["content"]
     assert SKILL.strip() in text and "zzzz" not in text
+
+
+def test_exec_script_with_several_calls_is_summarized_whole_and_matched_by_keep_pattern():
+    from cliffcompaction.dialects.openai_responses import tool_calls
+    js = ('const r = await Promise.allSettled([tools.exec_command({cmd:"cat TASK.txt"}),\n'
+          'tools.exec_command({cmd:"cat skills/motion/SKILL.md"})]);\n'
+          'await tools.mcp__robot__observe({});\n')
+    call = {"type": "custom_tool_call", "call_id": "c1", "name": "exec", "input": js}
+    [(call_id, text)] = tool_calls(call)
+    assert call_id == "c1" and text.startswith("[exec] ") and "SKILL.md" in text and "mcp__robot__observe" in text
+    single = {"type": "custom_tool_call", "call_id": "c2", "name": "exec",
+              "input": 'text(await tools.exec_command({cmd:"cat SKILL.md"}));\n'}
+    assert tool_calls(single) == [("c2", "[exec_command] cat SKILL.md")]
