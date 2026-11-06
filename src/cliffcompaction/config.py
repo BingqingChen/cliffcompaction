@@ -40,6 +40,11 @@ class Config:
     cmd_max_chars: int = 150
     # Tool results longer than this are dropped from the summary entirely.
     result_max_chars: int = 500
+    # Regex over a tool call's text (e.g. the shell command). Results of
+    # matching calls are kept verbatim in the summary, whatever their size,
+    # and carried into every later summary, so reference files the agent read
+    # (skills, READMEs) survive compaction. Empty = off.
+    keep_result_pattern: str = ""
     # Sanity cap for human text inside the summary (protects against a
     # giant paste making the summary bigger than what it replaced).
     human_max_chars: int = 20_000
@@ -87,6 +92,7 @@ class Config:
             thought_max_chars=_env_int("CLIFF_THOUGHT_MAX_CHARS", 0),
             cmd_max_chars=_env_int("CLIFF_CMD_MAX_CHARS", 150),
             result_max_chars=_env_int("CLIFF_RESULT_MAX_CHARS", 500),
+            keep_result_pattern=os.environ.get("CLIFF_KEEP_RESULT_PATTERN", ""),
             human_max_chars=_env_int("CLIFF_HUMAN_MAX_CHARS", 20_000),
             keep_thinking=_env_bool("CLIFF_KEEP_THINKING", True),
             thinking_max_chars=_env_int("CLIFF_THINKING_MAX_CHARS", 0),

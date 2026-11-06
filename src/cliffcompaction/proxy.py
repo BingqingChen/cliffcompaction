@@ -507,6 +507,8 @@ def create_app(
                 "strict": cfg.strict,
                 "threshold_tokens": cfg.threshold_tokens,
                 "keep_recent": cfg.keep_recent,
+                "result_max_chars": cfg.result_max_chars,
+                "keep_result_pattern": cfg.keep_result_pattern,
                 "store_entries": len(engine.store),
                 "store_bytes": engine.store.nbytes,
                 "sessions_tracked": len(seen_sids),

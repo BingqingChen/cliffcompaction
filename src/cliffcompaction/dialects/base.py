@@ -76,3 +76,10 @@ class Dialect:
     # person's message; Codex prepends an <environment_context> message, so a
     # genuine Responses opening turn carries two.
     opening_user_messages: int = 1
+    # Optional hooks for keep_result_pattern: (call_id, call text) for each
+    # tool call in a message, (call_id, result text) for each tool result, and
+    # a message's plain text (to read kept results back out of an earlier
+    # summary). A dialect without them never keeps results verbatim.
+    tool_calls: Callable[[dict], list[tuple[str, str]]] | None = None
+    tool_results: Callable[[dict], list[tuple[str, str]]] | None = None
+    message_text: Callable[[dict], str] | None = None

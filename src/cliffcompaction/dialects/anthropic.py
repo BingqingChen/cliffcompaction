@@ -228,6 +228,26 @@ def summarize_message(msg: dict, cfg: Config) -> list[str]:
     return []
 
 
+def tool_calls(msg: dict) -> list[tuple[str, str]]:
+    content = msg.get("content")
+    if not is_assistant(msg) or not isinstance(content, list):
+        return []
+    return [(b["id"], f"[{b.get('name', '?')}] {canonical_json(b.get('input', {}))}")
+            for b in content if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id")]
+
+
+def tool_results(msg: dict) -> list[tuple[str, str]]:
+    content = msg.get("content")
+    if msg.get("role") != "user" or not isinstance(content, list):
+        return []
+    return [(b["tool_use_id"], _result_text(b.get("content", "")).strip())
+            for b in content if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id")]
+
+
+def message_text(msg: dict) -> str:
+    return _result_text(msg.get("content", ""))
+
+
 def _is_system(msg: dict) -> bool:
     return msg.get("role") == "system"
 
@@ -247,4 +267,7 @@ DIALECT = Dialect(
     # A content-ful system message must precede an assistant message or end
     # the array; it may not precede the injected user-role summary.
     trim_from_head=_is_system,
+    tool_calls=tool_calls,
+    tool_results=tool_results,
+    message_text=message_text,
 )

@@ -147,6 +147,28 @@ def user_message(text: str) -> dict:
     return {"role": "user", "content": text}
 
 
+def tool_calls(msg: dict) -> list[tuple[str, str]]:
+    if msg.get("role") != "assistant":
+        return []
+    out = []
+    for tc in msg.get("tool_calls") or []:
+        if isinstance(tc, dict) and tc.get("id"):
+            fn = tc.get("function") or {}
+            args = fn.get("arguments", "")
+            out.append((tc["id"], f"[{fn.get('name', '?')}] {args if isinstance(args, str) else canonical_json(args)}"))
+    return out
+
+
+def tool_results(msg: dict) -> list[tuple[str, str]]:
+    if msg.get("role") == "tool" and msg.get("tool_call_id"):
+        return [(msg["tool_call_id"], _content_text(msg.get("content")).strip())]
+    return []
+
+
+def message_text(msg: dict) -> str:
+    return _content_text(msg.get("content"))
+
+
 DIALECT = Dialect(
     name="openai",
     digest_message=digest_message,
@@ -155,4 +177,7 @@ DIALECT = Dialect(
     user_message=user_message,
     is_summary_message=is_summary_message,
     session_key=session_key,
+    tool_calls=tool_calls,
+    tool_results=tool_results,
+    message_text=message_text,
 )

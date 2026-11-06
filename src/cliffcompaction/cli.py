@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -47,6 +48,7 @@ def _add_common_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--keep-recent", type=int, help="recent turns kept verbatim (default 3)")
     p.add_argument("--thought-max-chars", type=int, help="cap on assistant text per summarized turn; 0 = unlimited (default)")
     p.add_argument("--result-max-chars", type=int, help="tool results longer than this are dropped (default 500)")
+    p.add_argument("--keep-result-pattern", help="regex over a tool call's text (e.g. 'SKILL\\.md|README\\.md'); results of matching calls are kept verbatim across compactions")
     p.add_argument("--drop-thinking", action="store_true", help="exclude thinking/reasoning text from summaries (leaner configuration)")
     p.add_argument("--thinking-max-chars", type=int, help="cap on thinking text per summarized turn; 0 = unlimited (default), independent of --thought-max-chars")
     p.add_argument("--anthropic-upstream", help="Anthropic upstream base URL")
@@ -69,6 +71,8 @@ def _config_from_args(args: argparse.Namespace) -> Config:
         cfg.thought_max_chars = args.thought_max_chars
     if args.result_max_chars is not None:
         cfg.result_max_chars = args.result_max_chars
+    if getattr(args, "keep_result_pattern", None) is not None:
+        cfg.keep_result_pattern = args.keep_result_pattern
     if args.drop_thinking:
         cfg.keep_thinking = False
     if args.thinking_max_chars is not None:
@@ -79,6 +83,11 @@ def _config_from_args(args: argparse.Namespace) -> Config:
         cfg.openai_upstream = args.openai_upstream
     if args.debug_dir:
         cfg.debug_dir = args.debug_dir
+    if cfg.keep_result_pattern:
+        try:
+            re.compile(cfg.keep_result_pattern)
+        except re.error as exc:
+            raise SystemExit(f"error: --keep-result-pattern is not a valid regex: {exc}")
     return cfg
 
 
@@ -157,6 +166,8 @@ def _serve_args_from(args: argparse.Namespace) -> list[str]:
         out += ["--thought-max-chars", str(args.thought_max_chars)]
     if args.result_max_chars is not None:
         out += ["--result-max-chars", str(args.result_max_chars)]
+    if getattr(args, "keep_result_pattern", None) is not None:
+        out += ["--keep-result-pattern", args.keep_result_pattern]
     if args.drop_thinking:
         out.append("--drop-thinking")
     if args.thinking_max_chars is not None:
